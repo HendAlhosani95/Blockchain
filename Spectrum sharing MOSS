@@ -1,0 +1,219 @@
+pragma solidity ^0.5.10;
+pragma experimental ABIEncoderV2;
+contract Application {
+    
+    address payable BS; //payable address for base section
+    uint public TimeEnd; //to be used for registration time
+    uint public EndTime; //to be used for registration time
+    bool TimeEnded; 
+    uint Buying; //the length of buying and selling 
+    uint Selling;
+    bool SpectrumFindingFinish=false;
+
+    
+    struct PUBuyer{
+        address ID;//the address of PU;
+        int Role;
+        uint Amount;//the amount of bandwidth
+        uint Price;//price per unit bandwidth
+    }
+    struct PUSeller{
+        address ID;//the address of PU;
+        int Role;
+        uint Amount;//the amount of bandwidth
+        uint Price;//price per unit bandwidth
+    }
+      struct Results{
+        bool Trading;
+        int Role;
+        uint Amount;
+        uint Price;
+    }
+        struct RecordSharing{
+        uint Price;
+        uint Amount;
+        address Seller;
+        address Buyer;
+    }
+    
+    mapping(address=>Results) public RESULTS;//to state the record of matching spectrum；
+    PUBuyer[] public buys; //defining arrays of buyers and sellers
+    PUSeller[] public sells; 
+    mapping(address=>bool) Execution; // defining a boolian variable to tell if PU executed correctly or not
+    mapping (address=>uint) public pay; //deposit the money
+    mapping (address=>uint) public debt;
+
+    RecordSharing[] public recordsharing;
+
+    event RegisteredPU(address PU,int Role,uint Amount,uint Price); //even telling other nodes that PU has registered
+    event NewLogin(string msg);
+    event Record(uint Shareprice,uint Shareamount,address Seller, address Buyer);
+    event Correct(string msg); //to be used in GetBack function 
+    event NotEnoughMoney(uint Amount, string msg);
+
+  
+    constructor( uint RegistrationTime, uint RegistrationTime2) public payable{
+        TimeEnd = now + RegistrationTime;
+        EndTime=RegistrationTime2;
+        BS=msg.sender;
+    }
+    
+    function (
+        )external payable{}
+    
+    modifier BSOnly {
+        require(msg.sender==BS);
+        _;
+    }
+    function Register ( 
+        int ROLE, //enter the role (Ex: 1 for buyer and 2 for seller)
+        uint AMOUNT,
+        uint PRICE
+       
+    )
+   
+    public payable{
+       // some requirements for this function
+       // require( now <= TimeEnd, "Registration time has ended"); //the registration time must be valid
+        require(ROLE==1||ROLE==2,"Please re-enter a valid role");//defining the roles either 1 or 2
+        require(msg.value>1000000000000000000,"You must enter a minimum of 1 Ether"); //to deposit a fee for registration of 1 ether
+        pay[msg.sender]=msg.value;
+        Execution[msg.sender]=true; //send true 
+        if(ROLE==1){ //a statement for a buyer
+         buys.push(PUBuyer({ID:msg.sender,Role:ROLE, Amount:AMOUNT, Price:PRICE}));  
+         RESULTS[msg.sender]=Results({Trading:false,Role:1,Amount:AMOUNT,Price:PRICE});
+        }
+       if(ROLE==2){ //a statement for a seller
+         sells.push(PUSeller({ID:msg.sender,Role:ROLE, Amount:AMOUNT, Price:PRICE}));  
+         RESULTS[msg.sender]=Results({Trading:false,Role:2,Amount:AMOUNT,Price:PRICE});
+        }
+    emit RegisteredPU(msg.sender,ROLE,AMOUNT,PRICE);
+
+    }
+   
+    function RegTime ( 
+    )
+    public {
+        require(now >= TimeEnd, "The registration time is still valid");
+        require(!TimeEnded, "The registration time is not valid");
+        TimeEnded = true;
+        emit NewLogin("The registration time has just ended");
+        
+        
+    }
+
+    function Allocate ( 
+ 
+    )
+    public BSOnly {     
+        require(now>TimeEnd,"The registration time is still valid");
+        Allocation(buys,sells);
+        SpectrumFindingFinish=true;
+
+}
+    function Allocation(
+               PUBuyer [] memory D2,
+               PUSeller [] memory D1
+        )
+    internal returns(bool){
+        Selling=D1.length;
+        Buying=D2.length;
+
+        while(Selling!=0&&Buying!=0&&D1[0].Price<=D2[0].Price){
+            
+            uint SharingPrice=uint((D1[0].Price+D2[0].Price)/2); //the average
+            uint SharingAmount;
+            
+            //take the minimum amount of sharing
+            if(D2[0].Amount>D1[0].Amount){ //sharing happens when buyer has higher price than seller
+                 SharingAmount=D1[0].Amount;
+            }
+            else {
+                 SharingAmount=D2[0].Amount;
+            }
+         recordsharing.push(RecordSharing({Price:SharingPrice,Amount:SharingAmount,Seller:D1[0].ID,Buyer:D2[0].ID}));
+            uint Money=SharingPrice*SharingAmount;
+            //deposit the remaining money or pay it
+            if(pay[D2[0].ID]>=Money){
+                pay[D2[0].ID]-=Money;
+            }else{
+                uint remaining=Money-pay[D2[0].ID];
+                debt[D2[0].ID]+=remaining;
+            }
+            pay[D1[0].ID]+=Money;
+            emit Record(SharingAmount,SharingPrice,D1[0].ID,D2[0].ID);
+            D1[0].Amount=D1[0].Amount-SharingAmount;
+            D2[0].Amount=D2[0].Amount-SharingAmount;
+            
+           if(D1[0].Amount==0&&D2[0].Amount==0){ // means done sharing
+                RESULTS[D1[0].ID].Trading=true;
+                RESULTS[D1[0].ID].Amount=0;
+                RESULTS[D2[0].ID].Trading=true;
+                RESULTS[D2[0].ID].Amount=0;
+
+            //to process the next PU
+        for(uint i=0;i<Selling-1;i++){
+                    D1[i]=D1[i+1];
+                }
+                delete D1[Selling-1];
+                Selling--;
+                
+                for(uint k=0;k<Buying-1;k++){
+                    D2[k]=D2[k+1];
+                }
+                delete D2[Buying-1];
+                Buying--;
+            }}
+            return true;
+    }
+     
+    
+    //judge whether PUs have executed sharing process correctly or not;
+    function Check(
+    address PU,
+    bool correctly
+    
+    )public BSOnly{
+        require(now >= TimeEnd);
+        Execution[PU]=correctly; 
+    }
+   
+    function GetBack(
+        )public returns(bool) {
+            
+        require(now>TimeEnd);// requires the sharing time to end
+        require(Execution[msg.sender]==true,"Invalid PU");//requires the results of Check function to be true
+        
+        if(pay[msg.sender]!=0){
+            uint pay2=pay[msg.sender];
+            pay[msg.sender]=0;
+            if(msg.sender.send(pay2)){
+                emit Correct("get the money back successfully");
+                return true;
+            }
+            
+        }
+       else if(debt[msg.sender]!=0){
+            emit NotEnoughMoney(debt[msg.sender],"Add more money");
+            return true;
+       }
+        else{
+            emit Correct("Nothing to withdraw");
+            return true;
+        }
+    }
+  
+  function Owner () public BSOnly{
+      selfdestruct(BS);
+  }
+  
+  function Exit(
+      )
+      public returns(bool){
+        delete RESULTS[msg.sender];
+        return true;
+    }
+  
+   
+   
+}
